@@ -1,46 +1,160 @@
 # vps-tcp-tuning
 
-A reusable Codex / Claude Code skill for evidence-based Linux VPS TCP/network tuning, adapted from Lide's iBytebox article:
+一个给 Codex / Claude Code 复用的 VPS TCP / 网络调优 Skill，用于让 agent 按证据检查、测试、推荐并在用户确认后应用 Linux VPS 网络配置。
 
-- Source: https://blog.ibytebox.com/posts/ai-agent-vps-tcp-tuning/
-- Author: Lide / iBytebox
-- Source license noted by the article: CC BY-NC-SA 4.0
+本 Skill 基于 Lide / iBytebox 的文章整理而来：
 
-## What this skill enforces
+- 原文：[让 AI 帮你调 VPS 网络：中转机和落地机 TCP 调优笔记](https://blog.ibytebox.com/posts/ai-agent-vps-tcp-tuning/)
+- 作者：Lide / iBytebox
+- 原文标注许可：CC BY-NC-SA 4.0
 
-- Automatically use this skill when the user asks for `tcp调优`, `进行TCP调优`, or VPS network tuning.
-- Ask for missing context before touching remote hosts: SSH aliases, host roles, traffic path, critical direction, protocols, peers, and permission boundary.
-- Inspect and test first; do not cargo-cult `MTU 1440`, `TBF 1000Mbit`, or `256MB` buffers.
-- Produce a recommended configuration first. The user decides whether to apply it.
-- Do not apply persistent sysctl/qdisc/MTU/qos-agent/service changes until the user explicitly approves the recommendation.
-- Write rollback/profile evidence for any applied persistent changes.
+> 这个仓库不是“一键复制 sysctl 参数”的清单。它更像是一套给 AI 运维 agent 使用的工作流：先问清楚链路，再检查，再测试，再给出推荐配置，最后由用户决定是否应用。
 
-## Install for Codex
+## 这个 Skill 解决什么问题
+
+很多 VPS 网络调优容易变成照抄参数，例如：
+
+- 直接把 MTU 改成 `1440`
+- 直接套 `TBF=1000Mbit`
+- 直接把 TCP buffer 拉到 `256MB`
+- 看到重传就马上限速
+- 不区分中转机、落地机、建站机、出口机
+- 不区分 TCP 协议和 HY2 / TUIC / QUIC 这类 UDP 协议
+
+这个 Skill 强制 agent 按证据判断：
+
+- 当前机器是什么角色：中转、落地、出口、建站、混合节点
+- 真实业务链路怎么走
+- 用户关键方向是哪一段
+- 当前 sysctl / qdisc / MTU / 服务状态是什么
+- PMTU 是否真的有问题
+- iperf3 的重传是否和本机 qdisc drop / backlog 对得上
+- 是否真的需要 BBR、fq、buffer、MTU、HTB/TBF 或 qos-agent
+
+## 核心原则
+
+- 用户说 `tcp调优`、`进行TCP调优`、`VPS网络调优` 时，应自动使用这个 Skill。
+- agent 必须主动询问缺失信息，不能只看主机名猜业务链路。
+- 默认只做检查、测试和推荐，不默认写持久配置。
+- 所有持久配置变更前，必须先给出推荐配置。
+- 是否应用推荐配置，由用户决定。
+- 不把 `MTU 1440`、`TBF 1000Mbit`、`256MB buffer` 当万能答案。
+- 测试 peer 必须逐个测试，不默认并发压测。
+- 必须保留备份、验证步骤和回滚路径。
+
+## 安装到 Codex
 
 ```bash
 git clone https://github.com/Furinelle/vps-tcp-tuning.git ~/.agents/skills/vps-tcp-tuning
 ```
 
-## Install for Claude Code
+如果已经安装过，可以更新：
+
+```bash
+cd ~/.agents/skills/vps-tcp-tuning
+git pull
+```
+
+## 安装到 Claude Code
 
 ```bash
 git clone https://github.com/Furinelle/vps-tcp-tuning.git ~/.claude/skills/vps-tcp-tuning
 ```
 
-## Invocation example
+如果已经安装过，可以更新：
+
+```bash
+cd ~/.claude/skills/vps-tcp-tuning
+git pull
+```
+
+## 触发方式
+
+显式调用：
 
 ```text
 Use $vps-tcp-tuning to inspect and tune my relay or landing VPS networking safely.
 ```
 
-Or in Chinese:
+中文直接说也应触发：
 
 ```text
 帮我对这台 VPS 进行 TCP 调优。
 ```
 
-## Files
+```text
+参考这个链路，帮我做 VPS 网络调优。
+```
 
-- `SKILL.md` — main skill instructions.
-- `references/blog-method.md` — concise method checklist and command patterns distilled from the source article.
-- `agents/openai.yaml` — Codex UI metadata.
+```text
+检查一下这台中转机的 tcp调优 有没有问题。
+```
+
+## agent 会先问什么
+
+运行这个 Skill 时，agent 应主动询问缺失的关键字段：
+
+- `target_ssh`：目标机器的 SSH alias 或 SSH 命令
+- `machine_role`：中转、落地、出口、建站、混合节点等
+- `traffic_path`：例如 `用户 -> 中转 -> 落地 -> internet`
+- `critical_direction`：用户真正关心的方向，例如下载、上传、视频秒开
+- `proxy_software`：sing-box、xray、realm、gost、Hysteria2、TUIC、nginx、caddy、nftables 等
+- `proxy_protocols`：SS2022、VLESS REALITY、HY2、TUIC、WireGuard、direct web 等
+- `service_ports`：代理、Web、中转、iperf3 等相关端口
+- `advertised_bandwidth`：商家标称带宽或端口速度
+- `test_peers`：测试 peer 的标签、地址、iperf3 端口、是否允许 ping、是否能 SSH
+- `permission_boundary`：只检查、允许测试、只给计划、允许应用、是否允许重启、是否允许改 MTU/限速/qos-agent
+
+## 推荐配置再应用
+
+这个 Skill 明确要求：**先给推荐配置，再由用户决定是否应用。**
+
+推荐配置至少应包含：
+
+- 证据摘要：角色、关键链路、PMTU、iperf/counter delta、瓶颈判断
+- 精确候选配置：拟写入的 `/etc/sysctl.d/*.conf` 内容
+- 可能的 qdisc / systemd / MTU / qos-agent 命令或 unit
+- 不建议修改的项目和理由
+- 风险说明：是否需要重启、是否会中断服务
+- 验证计划：应用后如何读回和复测
+- 回滚方案：备份路径和恢复命令
+
+如果用户没有明确说“应用这个推荐配置”“按推荐应用”“直接应用”，agent 不应写入持久网络配置。
+
+## 典型工作流
+
+1. 主动询问缺失上下文。
+2. 只读检查主机：OS、kernel、CPU、内存、接口、MTU、路由、socket、sysctl、qdisc、服务进程。
+3. 读取已有 `/etc/sysctl.conf`、`/etc/sysctl.d/*.conf` 和 `*.profile.md`。
+4. 逐个 peer 做 PMTU、ping、iperf3 P1/P4 正向/反向测试。
+5. 记录测试窗口内 qdisc drop/backlog 和 TCP retransmission delta。
+6. 按中转/落地/出口/Web 角色解释结果。
+7. 给出推荐配置和不改项。
+8. 等用户确认。
+9. 应用前备份，应用后验证 SSH 和关键服务。
+10. 写 profile 和最终报告。
+
+## 仓库结构
+
+```text
+.
+├── SKILL.md                    # Skill 主说明
+├── references/
+│   └── blog-method.md           # 从原文整理出的详细方法和命令模式
+├── agents/
+│   └── openai.yaml              # Codex UI metadata
+├── README.md                    # 中文说明
+└── LICENSE                      # 来源和许可说明
+```
+
+## 注意事项
+
+- 不要把私钥、云厂商 token、代理密码直接发给 agent。
+- 如果是生产节点，建议先只允许检查和测试。
+- HY2 / TUIC / QUIC 不吃 Linux TCP buffer，但仍会受 MTU、qdisc、CPU 调度和出口 shaping 影响。
+- qdisc drop/backlog 为 0 但 iperf3 高重传时，不要急着全局限速；更可能是路径、上游或对端问题。
+- 一个弱 peer 的结果不能直接推导为全局配置。
+
+## 许可与署名
+
+本仓库内容是对原文方法的 Skill 化整理，并保留原文链接和作者信息。原文标注为 CC BY-NC-SA 4.0，请在使用和二次分发时遵守相应要求。
