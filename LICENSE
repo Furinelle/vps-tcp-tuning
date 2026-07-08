@@ -1,0 +1,9 @@
+This repository contains an adapted skill based on the following source article:
+
+  让 AI 帮你调 VPS 网络：中转机和落地机 TCP 调优笔记
+  Author: Lide / iBytebox
+  URL: https://blog.ibytebox.com/posts/ai-agent-vps-tcp-tuning/
+
+The source article states it is licensed under CC BY-NC-SA 4.0. This adapted skill preserves attribution and should be used and redistributed consistently with that license unless a different permission is obtained from the original author.
+
+CC BY-NC-SA 4.0: https://creativecommons.org/licenses/by-nc-sa/4.0/
