@@ -103,6 +103,7 @@ Use $vps-tcp-tuning to inspect and tune my relay or landing VPS networking safel
 - `service_ports`：代理、Web、中转、iperf3 等相关端口
 - `advertised_bandwidth`：商家标称带宽或端口速度
 - `test_peers`：测试 peer 的标签、地址、iperf3 端口、是否允许 ping、是否能 SSH
+- `peer_lifecycle`：哪些 peer 会长期续费/生产使用，哪些只是临时或即将弃用；持久参数应以长期 peer 为依据
 - `permission_boundary`：只检查、允许测试、只给计划、允许应用、是否允许重启、是否允许改 MTU/限速/qos-agent
 
 ## 推荐配置再应用
@@ -126,13 +127,24 @@ Use $vps-tcp-tuning to inspect and tune my relay or landing VPS networking safel
 1. 主动询问缺失上下文。
 2. 只读检查主机：OS、kernel、CPU、内存、接口、MTU、路由、socket、sysctl、qdisc、服务进程。
 3. 读取已有 `/etc/sysctl.conf`、`/etc/sysctl.d/*.conf` 和 `*.profile.md`。
-4. 逐个 peer 做 PMTU、ping、iperf3 P1/P4 正向/反向测试。
-5. 记录测试窗口内 qdisc drop/backlog 和 TCP retransmission delta。
-6. 按中转/落地/出口/Web 角色解释结果。
-7. 给出推荐配置和不改项。
-8. 等用户确认。
-9. 应用前备份，应用后验证 SSH 和关键服务。
-10. 写 profile 和最终报告。
+4. 识别长期 peer 和临时/即将弃用 peer；持久调优参数以长期 peer 为依据。
+5. 逐个 peer 做 PMTU、ping、iperf3 P1/P4 正向/反向测试。
+6. 记录测试窗口内 qdisc drop/backlog 和 TCP retransmission delta。
+7. 按中转/落地/出口/Web 角色解释结果。
+8. 给出推荐配置和不改项。
+9. 等用户确认。
+10. 应用前备份，应用后验证 SSH 和关键服务。
+11. 写 profile 和最终报告。
+
+## 实战经验更新
+
+2026-07-09 对 `dmit-lax` 做 TCP/UDP 调优后，补充了几条更强约束：
+
+- **长期 peer 优先**：如果一些 VPS 即将不续费，只把它们当作观察样本，不要让它们决定长期主机的持久参数。
+- **HY2 判断要分层**：HY2 外层是 UDP/QUIC，不直接吃 TCP buffer；但 VPS 作为出口访问网站时，出口 TCP 仍受 BBR、TCP buffer、PMTU、qdisc 影响。
+- **不要用 `pkill -f` 清 iperf3**：远端 SSH 脚本里包含同样命令文本时，`pkill -f` 可能杀掉当前 shell。应使用 `iperf3 -D --pidfile`，清理时只 kill pidfile 里的 `iperf3` PID。
+- **profile heredoc 要 quoted**：写 Markdown profile 时如果包含反引号代码块，必须使用 `<<'EOF'` 这类 quoted heredoc，避免 shell 命令替换误执行回滚命令。
+- **限速要有本机出口证据**：高重传但本机 egress qdisc drop/backlog 为 0 时，不应默认落盘 HTB/TBF/qos-agent。
 
 ## 仓库结构
 

@@ -16,6 +16,7 @@ Collect or ask for:
 | `service_ports` | Identify real services and testing ports. |
 | `advertised_bandwidth` | Bound shaping ladder and BDP estimates. |
 | `test_peers` | Peer label, IP/host, iperf3 port, ICMP, SSH, role. |
+| `peer_lifecycle` | Long-term/renewing peers should drive persistent tuning; soon-to-expire hosts may be tested for observation but should not dominate decisions. |
 | `permission_boundary` | Inspect, test, recommend, apply, reboot, MTU, shaping, cleanup. Persistent apply still requires explicit approval of the recommendation. |
 
 If these are missing, ask before remote work. If the user already provided some fields, ask only for the missing/high-risk ones. If the user says `进行TCP调优`, `tcp调优`, `VPS网络调优`, or similar, treat it as invoking this skill and start with the active questioning gate.
@@ -50,7 +51,7 @@ ls /etc/sysctl.d/*.profile.md 2>/dev/null | xargs -r sed -n '1,160p'
 
 ## PMTU and iperf3 Tests
 
-Run peers sequentially. Snapshot qdisc/TCP counters before and after each test window.
+Run peers sequentially. Snapshot qdisc/TCP counters before and after each test window. If the peer inventory includes soon-to-expire or throwaway VPSs, test them only when they help diagnose reachability; base persistent sysctl/qdisc/MTU/shaping decisions on the durable peers that match the user's real traffic path.
 
 PMTU ladder for IPv4:
 
@@ -75,6 +76,25 @@ iperf3 -c <peer> -p <port> -t 12 -O 2 -P 4 -R -J
 
 Record bitrate, retransmits, cwnd/RTT clues, startup behavior, single-flow vs multi-flow differences, qdisc drops/backlog deltas, and TCP retransmission counter deltas.
 
+Safer temporary server lifecycle:
+
+```bash
+# On the peer under test. Avoid pkill -f because the pattern may match
+# the current SSH shell command line and kill the session before setup.
+mkdir -p /root/network-tuning-$RUN_ID/tests/$peer
+PIDFILE=/root/network-tuning-$RUN_ID/tests/$peer/iperf3-server.pid
+LOGFILE=/root/network-tuning-$RUN_ID/tests/$peer/iperf3-server.log
+if [ -f "$PIDFILE" ]; then
+  oldpid=$(cat "$PIDFILE" 2>/dev/null || true)
+  if [ -n "$oldpid" ] && ps -p "$oldpid" -o comm= 2>/dev/null | grep -q '^iperf3$'; then
+    kill "$oldpid" || true
+  fi
+  rm -f "$PIDFILE"
+fi
+iperf3 -s -p <port> -D --forceflush --pidfile "$PIDFILE" --logfile "$LOGFILE"
+# Cleanup: kill only the verified PID from PIDFILE, then remove temporary firewall rules that this run added.
+```
+
 ## Interpretation Rules
 
 | Evidence | Likely meaning |
@@ -82,6 +102,7 @@ Record bitrate, retransmits, cwnd/RTT clues, startup behavior, single-flow vs mu
 | Single-flow low, multi-flow high | BDP, per-flow path limits, loss recovery, or congestion-control behavior. |
 | qdisc drop/backlog increases during test | Local egress queue/shaping may matter. |
 | qdisc drop/backlog stays zero but retransmits high | Suspect path, upstream, or remote receiver before local buffer/shaping changes. |
+| Durable peers clean but temporary peers weak | Tune for durable peers; report temporary-peer weakness separately. |
 | High retransmits with low cwnd | Loss/congestion is more likely than missing buffer. |
 | One peer bad, others clean | Do not downsize global capacity from one weak peer. |
 | HY2/TUIC/QUIC issue | Validate MTU/qdisc/CPU and app loss; TCP buffer may be irrelevant. |
@@ -110,11 +131,22 @@ Landing hosts: if they terminate or re-originate TCP, BBR/fq/buffers/notsent/TFO
 8. Read back effective sysctl/qdisc values.
 9. Rerun the most important tests.
 10. Roll back or revise if worse.
-11. Write `/etc/sysctl.d/*.profile.md` with role, tests, chosen values, reasoning, caveats, backup path, and rollback commands.
+11. Write `/etc/sysctl.d/*.profile.md` with role, durable peers, tests, chosen values, reasoning, caveats, backup path, and rollback commands.
+
+When writing profile Markdown from shell, use quoted heredocs for static content or avoid backticks in unquoted heredocs:
+
+```bash
+cat > /etc/sysctl.d/99-zz-tcp-tuning.profile.md <<'EOF'
+# profile text with literal backticks is safe here
+EOF
+```
+
+An unquoted heredoc containing Markdown code fences can trigger command substitution and accidentally run rollback-looking commands.
 
 ## Final Report Checklist
 
 - Inspected hosts and roles.
+- Durable peers used for decisions, and any temporary/non-renewing peers intentionally excluded.
 - Tests run and user-critical results.
 - Changes applied and explicit non-changes.
 - Retransmission, qdisc, PMTU, and bottleneck interpretation.

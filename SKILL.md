@@ -25,6 +25,7 @@ Ask for any missing fields:
 - `service_ports`: proxy/web/relay/iperf ports.
 - `advertised_bandwidth`: practical or advertised up/down/port speed.
 - `test_peers`: label, host/IP, iperf3 port, ICMP allowed, SSH access, role.
+- `peer_lifecycle`: which peers are long-term/renewing versus temporary/soon-to-expire; only durable peers should drive persistent tuning decisions unless the user explicitly says otherwise.
 - `permission_boundary`: inspect only, test only, plan only, apply allowed, reboot allowed, MTU changes allowed, shaping/qos-agent allowed.
 
 Defaults when the user is terse: inspect + test + recommendation only; no persistent changes, no reboot, no MTU change, no HTB/TBF/qos-agent, no cleanup of backups/logs. Never ask for private keys, tokens, or provider credentials.
@@ -46,13 +47,14 @@ After presenting the recommendation, stop and ask the user for approval unless t
 
 ## Workflow
 
-1. **Clarify and scope**: Use the questioning gate. State role assumptions back to the user before tests or changes.
+1. **Clarify and scope**: Use the questioning gate. State role, traffic path, and durable-peer assumptions back to the user before tests or changes.
 2. **Inspect read-only first**: Collect OS/kernel, CPU/memory, interfaces/MTU/routes, socket summary, sysctl TCP state, qdisc/class/filter state, softnet/RPS/XPS if relevant, existing `/etc/sysctl.conf`, `/etc/sysctl.d/*.conf`, running proxy/web/systemd units, and any `*.profile.md` tuning profile.
-3. **Test one peer at a time**: Ping if allowed; test PMTU before MTU/MSS decisions; run iperf3 P1/P4 forward and reverse for user-critical directions; record bitrate, retransmits, RTT/cwnd clues, and qdisc/TCP counter deltas during each window.
-4. **Interpret by role**: For relays, map ingress/egress to user experience. For landing/exit/web hosts, separate TCP endpoint behavior from UDP/QUIC behavior. Do not generalize from one weak peer.
-5. **Recommend exact config first**: Produce the recommendation bundle. Include exact candidate files/commands, rejected knobs, verification, and rollback. Stop for user approval unless the user already explicitly approved applying the recommendation.
-6. **Apply only after approval**: Before persistent changes, back up `/etc/sysctl.conf` and `/etc/sysctl.d/`. Use a consolidated `/etc/sysctl.d/` file, avoid order conflicts, apply with `sysctl --system`, verify SSH/service health, rerun the important tests, and roll back if worse.
-7. **Write profile and report**: Record role, tests, chosen values, reasoning, caveats, backup path, and rollback commands in a small `/etc/sysctl.d/*.profile.md`. Final reports should prefer aliases and masked IPs.
+3. **Choose peers deliberately**: Use all peers for broad observation only when useful, but let long-term/production peers drive persistent config; do not tune a lasting host around a soon-to-expire VPS.
+4. **Test one peer at a time**: Ping if allowed; test PMTU before MTU/MSS decisions; run iperf3 P1/P4 forward and reverse for user-critical directions; record bitrate, retransmits, RTT/cwnd clues, and qdisc/TCP counter deltas during each window.
+5. **Interpret by role**: For relays, map ingress/egress to user experience. For landing/exit/web hosts, separate TCP endpoint behavior from UDP/QUIC behavior. Do not generalize from one weak or temporary peer.
+6. **Recommend exact config first**: Produce the recommendation bundle. Include exact candidate files/commands, rejected knobs, verification, and rollback. Stop for user approval unless the user already explicitly approved applying the recommendation.
+7. **Apply only after approval**: Before persistent changes, back up `/etc/sysctl.conf` and `/etc/sysctl.d/`. Use a consolidated `/etc/sysctl.d/` file, avoid order conflicts, apply with `sysctl --system`, verify SSH/service health, rerun the important tests, and roll back if worse.
+8. **Write profile and report**: Record role, durable peers, tests, chosen values, reasoning, caveats, backup path, and rollback commands in a small `/etc/sysctl.d/*.profile.md`. Final reports should prefer aliases and masked IPs.
 
 ## Tuning Policy
 
@@ -67,7 +69,10 @@ After presenting the recommendation, stop and ask the user for approval unless t
 
 - Applying `MTU 1440`, `TBF 1000Mbit`, or `256MB` buffers because they appeared in a previous case.
 - Running multiple peers concurrently and losing attribution.
+- Letting soon-to-expire or non-renewing VPS peers drive persistent tuning for a long-term host.
 - Treating absolute retransmit counters as evidence without before/after deltas.
 - Assuming qdisc-free retransmits are local queue problems.
 - Using TCP iperf results as proof for all UDP/QUIC protocol behavior.
+- Killing the current remote SSH shell with `pkill -f` because the iperf pattern appears in the shell script text; prefer iperf3 `--pidfile` and kill that PID only.
+- Writing Markdown profile files with unquoted heredocs containing backticks; use quoted heredocs or avoid command-substitution characters.
 - Leaving persistent config without a backup path and profile.
