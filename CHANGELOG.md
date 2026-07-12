@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-07-12
+
+### Added
+
+- Added a commit-pinned review of `Madhatter2099/TCP-Optimize` covering reusable workflow ideas, parameter caveats, static implementation findings, and evidence gates.
+- Added read-only collection guidance for dual-stack routing, conntrack pressure, RX queue topology, IRQ distribution, RPS/RFS, and per-CPU softirq state.
+
+### Changed
+
+- Extended tuning policy for IPv4 address selection, conntrack sizing, RPS/RFS, MSS clamping, service limits, live qdisc verification, and third-party script ownership.
+- Clarified that `udp_mem` uses memory pages, RAM percentages are not a buffer-sizing formula, and BBRv3 must not be inferred from kernel version alone.
+- Expanded the Chinese README with a concise comparison and link to the detailed review.
+
 ## 2026-07-09
 
 ### Added

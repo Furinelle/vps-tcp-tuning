@@ -47,6 +47,17 @@ cat /proc/net/softnet_stat 2>/dev/null | head
 find /etc/sysctl.d -maxdepth 1 -type f -name '*.conf' -print -exec sed -n '1,160p' {} \;
 systemctl --type=service --state=running --no-pager | grep -Ei 'sing-box|xray|realm|gost|nodepass|hysteria|tuic|nginx|caddy|apache|iperf3|qos-agent' || true
 ls /etc/sysctl.d/*.profile.md 2>/dev/null | xargs -r sed -n '1,160p'
+
+# Dual-stack, conntrack, and receive-scaling evidence when relevant
+ip -4 route; ip -6 route
+getent ahosts <real-service-hostname> 2>/dev/null || true
+sysctl net.netfilter.nf_conntrack_count net.netfilter.nf_conntrack_max 2>/dev/null || true
+nstat -az 2>/dev/null | grep -Ei 'conntrack|listen|retrans|timeout|drop' || true
+grep -E 'NET_RX|NET_TX' /proc/softirqs 2>/dev/null || true
+grep -Ei 'virtio|eth|ens|enp' /proc/interrupts 2>/dev/null || true
+find /sys/class/net/<dev>/queues -maxdepth 2 \
+  \( -name rps_cpus -o -name rps_flow_cnt -o -name xps_cpus \) \
+  -print -exec cat {} \; 2>/dev/null
 ```
 
 ## PMTU and iperf3 Tests
@@ -118,6 +129,13 @@ Landing hosts: if they terminate or re-originate TCP, BBR/fq/buffers/notsent/TFO
 - MTU: keep 1500 when clean. Consider 1450-1460 for mild tunnel/provider overhead, or 1400-1440 for nested encapsulation/consumer ISP/UDP paths, only with evidence.
 - HTB/TBF: test practical stable uplink with 95/90/85/80/75% ladder. Choose the highest cap that lowers retransmits/drops without harming critical throughput. Keep fq as the child qdisc.
 - qos-agent: reserve for adaptive per-peer/per-port/per-source control; do not deploy by default.
+- IPv4 preference: compare real IPv4 and IPv6 service paths first. `/etc/gai.conf` changes libc address selection; it does not rewrite DNS responses.
+- Conntrack: inspect whether the host actually traverses NAT/firewall conntrack and compare `nf_conntrack_count` with the limit. Do not derive table size from RAM alone.
+- RPS/RFS: use only when queue topology and per-CPU softirq evidence show a receive-side bottleneck. The per-queue `rps_flow_cnt` values should add up sensibly to `rps_sock_flow_entries`; RSS may already make RPS redundant.
+- MSS clamp: use on a forwarding/tunnel path only when PMTU evidence supports it, and persist the rule through the host's nftables/iptables/UFW ownership model.
+- File limits: inspect the daemon's current and systemd limits; prefer a service drop-in over an indiscriminate global million-entry limit.
+
+For a detailed audit of the ideas and failure modes in `Madhatter2099/TCP-Optimize`, read `tcp-optimize-review.md`.
 
 ## Recommendation and Safe Apply Process
 

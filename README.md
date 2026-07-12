@@ -30,6 +30,7 @@
 - PMTU 是否真的有问题
 - iperf3 的重传是否和本机 qdisc drop / backlog 对得上
 - 是否真的需要 BBR、fq、buffer、MTU、HTB/TBF 或 qos-agent
+- 是否真的需要 IPv4 优先、conntrack 扩容、RPS/RFS、MSS Clamp 或全局文件句柄扩容
 
 ## 核心原则
 
@@ -146,13 +147,30 @@ Use $vps-tcp-tuning to inspect and tune my relay or landing VPS networking safel
 - **profile heredoc 要 quoted**：写 Markdown profile 时如果包含反引号代码块，必须使用 `<<'EOF'` 这类 quoted heredoc，避免 shell 命令替换误执行回滚命令。
 - **限速要有本机出口证据**：高重传但本机 egress qdisc drop/backlog 为 0 时，不应默认落盘 HTB/TBF/qos-agent。
 
+## 对 TCP-Optimize 的参考
+
+Skill 也审阅了 [`Madhatter2099/TCP-Optimize`](https://github.com/Madhatter2099/TCP-Optimize) 的模块化设计。吸收的部分包括：按功能拆分、展示 live 状态、先检查 BBR 支持、加载 conntrack 模块、独立评估 RPS/RFS、明确清理项。
+
+其中的具体参数不会直接作为通用推荐：
+
+- TCP buffer 不按“总内存 5%”直接定值，仍按 BDP、并发和内存压力计算。
+- `udp_mem` 的单位是内存页，不按普通字节 buffer 解读。
+- IPv4 优先只在真实 IPv6 路径较差时推荐；`gai.conf` 改的是地址选择顺序，不是 DNS 响应。
+- RPS/RFS 先看 RX 队列、IRQ、每 CPU softirq 和 softnet drop；RSS 已充分分流时可能没有收益。
+- conntrack、MSS Clamp、IP forwarding、百万级文件句柄只对有对应角色和压力证据的机器推荐。
+- 不通过内核版本号直接判断 BBRv3，需核对内核包或补丁来源。
+- 回滚恢复调优前的真实状态，不把 `cubic + fq_codel` 当所有发行版和主机的默认值。
+
+完整审阅见 [`references/tcp-optimize-review.md`](references/tcp-optimize-review.md)。
+
 ## 仓库结构
 
 ```text
 .
 ├── SKILL.md                    # Skill 主说明
 ├── references/
-│   └── blog-method.md           # 从原文整理出的详细方法和命令模式
+│   ├── blog-method.md           # 从原文整理出的详细方法和命令模式
+│   └── tcp-optimize-review.md   # 对 TCP-Optimize 的证据化参考与边界
 ├── agents/
 │   └── openai.yaml              # Codex UI metadata
 ├── README.md                    # 中文说明
