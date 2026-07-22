@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-07-22
+
+### Added
+
+- Added a commit-reviewed reference for [`Eric86777/vps-tcp-tune`](https://github.com/Eric86777/vps-tcp-tune) (`net-tcp-tune.sh` v5.4.4) in `references/vps-tcp-tune-review.md`.
+- Documented the bandwidth × service-region buffer candidate ladder (Asia / overseas), BDP cross-check (`Mbps × RTT_ms × 125`), live `fq` apply + boot persistence, sysctl conflict hygiene, and owned-file inventory for menu 3 artifacts.
+- Extended active-questioning fields with `service_region` / RTT class and optional third-party-script / kernel-swap permission.
+- Expanded skill triggers for `BBR调优`, XanMod, one-click `bbr` menus, Realm timeout fix, and menu `3`/`66` style requests.
+
+### Changed
+
+- Upgraded `SKILL.md` workflow: size buffers from evidence after peer tests; verify live qdisc after `default_qdisc=fq`; prefer `tcp_mtu_probing` over cargo-cult interface MTU 1440; keep recommendation-before-apply for all persistent changes.
+- Extended `references/blog-method.md` candidate decisions for live fq persistence, initcwnd, endpoint extras, Realm/conntrack modules, and conflict-aware apply/read-back.
+- Clarified that this skill must not silently wrap `curl | bash` or auto-run menu-66 chains (DNS purify, permanent IPv6 disable, Realm rewrite) without per-step evidence and approval.
+
+### Notes
+
+- Reusable ideas from Eric's script are absorbed as **candidates with evidence gates**, not as universal defaults.
+- Do not infer BBRv3 from `uname -r` alone; sysctl name remains `bbr` across variants.
+
 ## 2026-07-12
 
 ### Added

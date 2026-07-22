@@ -14,10 +14,11 @@ Collect or ask for:
 | `critical_direction` | User download/upload may map to target egress/ingress differently. |
 | `proxy_software` / `proxy_protocols` | TCP and UDP/QUIC respond to different knobs. |
 | `service_ports` | Identify real services and testing ports. |
-| `advertised_bandwidth` | Bound shaping ladder and BDP estimates. |
+| `advertised_bandwidth` | Bound shaping ladder and BDP estimates. Prefer known port speed over public speedtests when available. |
+| `service_region` / RTT class | Asia/short-RTT vs overseas/long-RTT; selects BDP-informed buffer *candidates* (see `vps-tcp-tune-review.md`). |
 | `test_peers` | Peer label, IP/host, iperf3 port, ICMP, SSH, role. |
 | `peer_lifecycle` | Long-term/renewing peers should drive persistent tuning; soon-to-expire hosts may be tested for observation but should not dominate decisions. |
-| `permission_boundary` | Inspect, test, recommend, apply, reboot, MTU, shaping, cleanup. Persistent apply still requires explicit approval of the recommendation. |
+| `permission_boundary` | Inspect, test, recommend, apply, reboot, MTU, shaping, cleanup, third-party script/kernel swap. Persistent apply still requires explicit approval of the recommendation. |
 
 If these are missing, ask before remote work. If the user already provided some fields, ask only for the missing/high-risk ones. If the user says `进行TCP调优`, `tcp调优`, `VPS网络调优`, or similar, treat it as invoking this skill and start with the active questioning gate.
 
@@ -124,18 +125,21 @@ Landing hosts: if they terminate or re-originate TCP, BBR/fq/buffers/notsent/TFO
 
 ## Candidate Tuning Decisions
 
-- BBR/fq: prefer when available and appropriate; use bbr3 only if exposed by kernel.
-- Buffers: estimate from bandwidth-delay product, memory, role, and concurrency. Small 100M hosts often need conservative ceilings. 1G hosts may justify 64-128MB. Higher values need evidence.
-- MTU: keep 1500 when clean. Consider 1450-1460 for mild tunnel/provider overhead, or 1400-1440 for nested encapsulation/consumer ISP/UDP paths, only with evidence.
+- BBR/fq: prefer when available and appropriate; use bbr3 only if exposed by kernel. After recommending `default_qdisc=fq`, verify the **live** root qdisc and plan reboot persistence (`tc qdisc replace` + systemd/networkd).
+- Buffers: estimate from bandwidth-delay product, memory, role, concurrency, and service_region. Rough BDP bytes ≈ `Mbps × RTT_ms × 125`. Use Asia/overseas ladders in `vps-tcp-tune-review.md` as candidates (overseas often larger, commonly capped near 64 MiB); small RAM hosts stay conservative. Prefer known port speed over public speedtests when they disagree.
+- MTU: keep 1500 when clean. Consider 1450-1460 for mild tunnel/provider overhead, or 1400-1440 for nested encapsulation/consumer ISP/UDP paths, only with evidence. Prefer `tcp_mtu_probing` (TCP-only) over cargo-cult interface MTU 1440 when black holes are TCP-specific.
 - HTB/TBF: test practical stable uplink with 95/90/85/80/75% ladder. Choose the highest cap that lowers retransmits/drops without harming critical throughput. Keep fq as the child qdisc.
 - qos-agent: reserve for adaptive per-peer/per-port/per-source control; do not deploy by default.
-- IPv4 preference: compare real IPv4 and IPv6 service paths first. `/etc/gai.conf` changes libc address selection; it does not rewrite DNS responses.
-- Conntrack: inspect whether the host actually traverses NAT/firewall conntrack and compare `nf_conntrack_count` with the limit. Do not derive table size from RAM alone.
+- IPv4 preference: compare real IPv4 and IPv6 service paths first. `/etc/gai.conf` changes libc address selection; it does not rewrite DNS responses. Do not permanently disable IPv6 as a default optimize step.
+- Conntrack: inspect whether the host actually traverses NAT/firewall conntrack and compare `nf_conntrack_count` with the limit. Do not derive table size from RAM alone or hardcode popular script values.
 - RPS/RFS: use only when queue topology and per-CPU softirq evidence show a receive-side bottleneck. The per-queue `rps_flow_cnt` values should add up sensibly to `rps_sock_flow_entries`; RSS may already make RPS redundant.
 - MSS clamp: use on a forwarding/tunnel path only when PMTU evidence supports it, and persist the rule through the host's nftables/iptables/UFW ownership model.
 - File limits: inspect the daemon's current and systemd limits; prefer a service drop-in over an indiscriminate global million-entry limit.
+- initcwnd/initrwnd: optional on default route after baseline; re-check after DHCP/NetworkManager or reboot.
+- Endpoint extras (`tcp_notsent_lowat`, keepalive, `tcp_fin_timeout`, TFO): optional for landing/proxy TCP termination; not universal for pure L4 relays.
+- Realm/L4 relay extras: only when that software is present (conntrack pressure, nodelay/reuse_port, unit `LimitNOFILE`).
 
-For a detailed audit of the ideas and failure modes in `Madhatter2099/TCP-Optimize`, read `tcp-optimize-review.md`.
+For a detailed audit of the ideas and failure modes in `Madhatter2099/TCP-Optimize`, read `tcp-optimize-review.md`. For `Eric86777/vps-tcp-tune` (XanMod/BBRv3 one-click, menu 3/66, Realm fix), read `vps-tcp-tune-review.md`.
 
 ## Recommendation and Safe Apply Process
 
@@ -143,10 +147,10 @@ For a detailed audit of the ideas and failure modes in `Madhatter2099/TCP-Optimi
 2. Present exact recommended config before applying: proposed `/etc/sysctl.d/*.conf` content, any qdisc/systemd/MTU/qos-agent commands, rejected candidate knobs, risk/interruption notes, verification plan, and rollback plan.
 3. Stop for user approval unless the current user message explicitly says to apply the recommendation.
 4. After approval, back up `/etc/sysctl.conf` and `/etc/sysctl.d/`.
-5. Write one consolidated sysctl.d file for active tuning; avoid order-dependent conflicts.
-6. Apply with `sysctl --system`.
+5. Write one consolidated sysctl.d file for active tuning; inventory and neutralize higher-priority conflicting drop-ins before apply.
+6. Apply with `sysctl -p <file>` and/or `sysctl --system`. If recommending live `fq`/MSS clamp/initcwnd, apply those explicitly and install persistence only when approved.
 7. Confirm SSH and critical services still work.
-8. Read back effective sysctl/qdisc values.
+8. Read back effective sysctl/qdisc values, buffer bytes, and any route/RPS changes.
 9. Rerun the most important tests.
 10. Roll back or revise if worse.
 11. Write `/etc/sysctl.d/*.profile.md` with role, durable peers, tests, chosen values, reasoning, caveats, backup path, and rollback commands.

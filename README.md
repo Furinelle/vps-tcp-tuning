@@ -8,7 +8,12 @@
 - 作者：Lide / iBytebox
 - 原文标注许可：CC BY-NC-SA 4.0
 
-> 这个仓库不是“一键复制 sysctl 参数”的清单。它更像是一套给 AI 运维 agent 使用的工作流：先问清楚链路，再检查，再测试，再给出推荐配置，最后由用户决定是否应用。
+并参考了常见一键调优脚本的模块设计（吸收工作流，不照搬参数）：
+
+- [`Madhatter2099/TCP-Optimize`](https://github.com/Madhatter2099/TCP-Optimize)
+- [`Eric86777/vps-tcp-tune`](https://github.com/Eric86777/vps-tcp-tune)（`net-tcp-tune.sh` v5.4.4 审阅）
+
+> 这个仓库不是“一键复制 sysctl 参数”的清单，也不是 `curl | bash` 包装器。它更像是一套给 AI 运维 agent 使用的工作流：先问清楚链路，再检查，再测试，再给出推荐配置，最后由用户决定是否应用。
 
 ## 这个 Skill 解决什么问题
 
@@ -16,32 +21,36 @@
 
 - 直接把 MTU 改成 `1440`
 - 直接套 `TBF=1000Mbit`
-- 直接把 TCP buffer 拉到 `256MB`
+- 直接把 TCP buffer 拉到 `256MB` / 海外档 `64MB`
 - 看到重传就马上限速
 - 不区分中转机、落地机、建站机、出口机
 - 不区分 TCP 协议和 HY2 / TUIC / QUIC 这类 UDP 协议
+- 直接跑一键菜单（DNS 净化、永久关 IPv6、Realm 改配置）却不做证据核对
 
 这个 Skill 强制 agent 按证据判断：
 
 - 当前机器是什么角色：中转、落地、出口、建站、混合节点
-- 真实业务链路怎么走
+- 真实业务链路怎么走，服务地区 / RTT 档位（亚太短 RTT vs 美欧长 RTT）
 - 用户关键方向是哪一段
 - 当前 sysctl / qdisc / MTU / 服务状态是什么
 - PMTU 是否真的有问题
 - iperf3 的重传是否和本机 qdisc drop / backlog 对得上
 - 是否真的需要 BBR、fq、buffer、MTU、HTB/TBF 或 qos-agent
-- 是否真的需要 IPv4 优先、conntrack 扩容、RPS/RFS、MSS Clamp 或全局文件句柄扩容
+- 是否真的需要 IPv4 优先、conntrack 扩容、RPS/RFS、MSS Clamp、initcwnd 或全局文件句柄扩容
+- 写了 `default_qdisc=fq` 之后，**live** 根 qdisc 是否真的变成了 `fq`
 
 ## 核心原则
 
-- 用户说 `tcp调优`、`进行TCP调优`、`VPS网络调优` 时，应自动使用这个 Skill。
+- 用户说 `tcp调优`、`进行TCP调优`、`VPS网络调优`、`BBR调优` 时，应自动使用这个 Skill。
 - agent 必须主动询问缺失信息，不能只看主机名猜业务链路。
 - 默认只做检查、测试和推荐，不默认写持久配置。
 - 所有持久配置变更前，必须先给出推荐配置。
 - 是否应用推荐配置，由用户决定。
-- 不把 `MTU 1440`、`TBF 1000Mbit`、`256MB buffer` 当万能答案。
-- 测试 peer 必须逐个测试，不默认并发压测。
+- 不把 `MTU 1440`、`TBF 1000Mbit`、固定大 buffer、一键菜单默认值当万能答案。
+- 缓冲区按 BDP、并发、内存、角色和 `service_region` 估算；公共 speedtest 只作参考，已知端口带宽优先。
+- 测试 peer 必须逐个测试，不默认并发压测；持久参数以长期 peer 为依据。
 - 必须保留备份、验证步骤和回滚路径。
+- 不静默执行第三方一键脚本或 menu 66 式连锁副作用。
 
 ## 安装到 Codex
 
@@ -69,6 +78,8 @@ cd ~/.claude/skills/vps-tcp-tuning
 git pull
 ```
 
+> 若本机 skill 目录是普通文件夹而不是 git clone，可重新 clone 覆盖，或从本仓库拷贝 `SKILL.md`、`references/`、`agents/`。
+
 ## 触发方式
 
 显式调用：
@@ -91,6 +102,10 @@ Use $vps-tcp-tuning to inspect and tune my relay or landing VPS networking safel
 检查一下这台中转机的 tcp调优 有没有问题。
 ```
 
+```text
+按 Eric 那个 bbr 脚本的思路，帮我推荐落地机参数（先别改）。
+```
+
 ## agent 会先问什么
 
 运行这个 Skill 时，agent 应主动询问缺失的关键字段：
@@ -102,10 +117,11 @@ Use $vps-tcp-tuning to inspect and tune my relay or landing VPS networking safel
 - `proxy_software`：sing-box、xray、realm、gost、Hysteria2、TUIC、nginx、caddy、nftables 等
 - `proxy_protocols`：SS2022、VLESS REALITY、HY2、TUIC、WireGuard、direct web 等
 - `service_ports`：代理、Web、中转、iperf3 等相关端口
-- `advertised_bandwidth`：商家标称带宽或端口速度
+- `advertised_bandwidth`：商家标称带宽或端口速度（Mbps）
+- `service_region` / RTT 档：亚太短延迟 vs 美欧长延迟（影响 buffer 候选）
 - `test_peers`：测试 peer 的标签、地址、iperf3 端口、是否允许 ping、是否能 SSH
 - `peer_lifecycle`：哪些 peer 会长期续费/生产使用，哪些只是临时或即将弃用；持久参数应以长期 peer 为依据
-- `permission_boundary`：只检查、允许测试、只给计划、允许应用、是否允许重启、是否允许改 MTU/限速/qos-agent
+- `permission_boundary`：只检查、允许测试、只给计划、允许应用、是否允许重启、是否允许改 MTU/限速/qos-agent、是否允许跑第三方脚本/换内核
 
 ## 推荐配置再应用
 
@@ -113,12 +129,12 @@ Use $vps-tcp-tuning to inspect and tune my relay or landing VPS networking safel
 
 推荐配置至少应包含：
 
-- 证据摘要：角色、关键链路、PMTU、iperf/counter delta、瓶颈判断
+- 证据摘要：角色、关键链路、PMTU、带宽/RTT 档、iperf/counter delta、瓶颈判断
 - 精确候选配置：拟写入的 `/etc/sysctl.d/*.conf` 内容
-- 可能的 qdisc / systemd / MTU / qos-agent 命令或 unit
-- 不建议修改的项目和理由
-- 风险说明：是否需要重启、是否会中断服务
-- 验证计划：应用后如何读回和复测
+- 可能的 qdisc / systemd / MTU / qos-agent / initcwnd / RPS 命令或 unit
+- 不建议修改的项目和理由（含一键脚本的激进副作用）
+- 风险说明：是否需要重启、是否会中断服务、是否换内核
+- 验证计划：应用后如何读回 live cc/qdisc/buffer 并复测
 - 回滚方案：备份路径和恢复命令
 
 如果用户没有明确说“应用这个推荐配置”“按推荐应用”“直接应用”，agent 不应写入持久网络配置。
@@ -126,16 +142,16 @@ Use $vps-tcp-tuning to inspect and tune my relay or landing VPS networking safel
 ## 典型工作流
 
 1. 主动询问缺失上下文。
-2. 只读检查主机：OS、kernel、CPU、内存、接口、MTU、路由、socket、sysctl、qdisc、服务进程。
+2. 只读检查主机：OS、kernel、CPU、内存、接口、MTU、路由、socket、sysctl、qdisc、服务进程；识别是否已有一键脚本产物（如 `99-bbr-ultimate.conf`、`bbr-optimize-persist.service`）。
 3. 读取已有 `/etc/sysctl.conf`、`/etc/sysctl.d/*.conf` 和 `*.profile.md`。
 4. 识别长期 peer 和临时/即将弃用 peer；持久调优参数以长期 peer 为依据。
 5. 逐个 peer 做 PMTU、ping、iperf3 P1/P4 正向/反向测试。
 6. 记录测试窗口内 qdisc drop/backlog 和 TCP retransmission delta。
-7. 按中转/落地/出口/Web 角色解释结果。
+7. 按中转/落地/出口/Web 角色解释结果；用 BDP 与地区表估算 buffer **候选**。
 8. 给出推荐配置和不改项。
 9. 等用户确认。
-10. 应用前备份，应用后验证 SSH 和关键服务。
-11. 写 profile 和最终报告。
+10. 应用前备份并处理 sysctl 冲突；需要 `fq` 时同时处理 live qdisc 与持久化。
+11. 应用后验证 SSH、关键服务、live 参数，并写 profile 与最终报告。
 
 ## 实战经验更新
 
@@ -147,34 +163,50 @@ Use $vps-tcp-tuning to inspect and tune my relay or landing VPS networking safel
 - **profile heredoc 要 quoted**：写 Markdown profile 时如果包含反引号代码块，必须使用 `<<'EOF'` 这类 quoted heredoc，避免 shell 命令替换误执行回滚命令。
 - **限速要有本机出口证据**：高重传但本机 egress qdisc drop/backlog 为 0 时，不应默认落盘 HTB/TBF/qos-agent。
 
-## 对 TCP-Optimize 的参考
+## 对第三方一键脚本的参考
 
-Skill 也审阅了 [`Madhatter2099/TCP-Optimize`](https://github.com/Madhatter2099/TCP-Optimize) 的模块化设计。吸收的部分包括：按功能拆分、展示 live 状态、先检查 BBR 支持、加载 conntrack 模块、独立评估 RPS/RFS、明确清理项。
+### Madhatter2099/TCP-Optimize
 
-其中的具体参数不会直接作为通用推荐：
+吸收：按功能拆分、展示 live 状态、先检查 BBR 支持、加载 conntrack、独立评估 RPS/RFS、明确清理项。
 
-- TCP buffer 不按“总内存 5%”直接定值，仍按 BDP、并发和内存压力计算。
-- `udp_mem` 的单位是内存页，不按普通字节 buffer 解读。
-- IPv4 优先只在真实 IPv6 路径较差时推荐；`gai.conf` 改的是地址选择顺序，不是 DNS 响应。
-- RPS/RFS 先看 RX 队列、IRQ、每 CPU softirq 和 softnet drop；RSS 已充分分流时可能没有收益。
-- conntrack、MSS Clamp、IP forwarding、百万级文件句柄只对有对应角色和压力证据的机器推荐。
-- 不通过内核版本号直接判断 BBRv3，需核对内核包或补丁来源。
-- 回滚恢复调优前的真实状态，不把 `cubic + fq_codel` 当所有发行版和主机的默认值。
+不直接通用化：总内存 5% buffer、`udp_mem` 当字节、盲目 IPv4 优先 / RPS / conntrack / MSS / 百万 nofile、用内核版本推断 BBRv3、把 `cubic+fq_codel` 当万能回滚默认值。
 
 完整审阅见 [`references/tcp-optimize-review.md`](references/tcp-optimize-review.md)。
+
+### Eric86777/vps-tcp-tune
+
+吸收（作为**候选**与工作流，不是静默一键）：
+
+- 带宽 × 服务地区（亚太 / 美欧）缓冲区阶梯，并用 BDP 交叉校验
+- 写 `default_qdisc=fq` 的同时对物理网卡做 live `tc qdisc replace`，并考虑开机持久化
+- 应用前清理 sysctl 冲突、应用后读回验证
+- 倾向 `tcp_mtu_probing`，而不是默认改接口 MTU 1440
+- Realm / conntrack、initcwnd、RPS 等拆成可选模块，各自过证据门
+
+明确拒绝默认照搬：
+
+- menu 66 连锁（DNS 净化 + Realm 改配置 + 永久关 IPv6）
+- 未 pin 版本的 `curl | bash`
+- 把任意 XanMod / `bbr` 都叫 BBRv3
+- 无压力证据就写死 `nf_conntrack_max=262144`
+- 无双栈对比就永久禁用 IPv6
+
+完整审阅见 [`references/vps-tcp-tune-review.md`](references/vps-tcp-tune-review.md)。
 
 ## 仓库结构
 
 ```text
 .
-├── SKILL.md                    # Skill 主说明
+├── SKILL.md                         # Skill 主说明
 ├── references/
-│   ├── blog-method.md           # 从原文整理出的详细方法和命令模式
-│   └── tcp-optimize-review.md   # 对 TCP-Optimize 的证据化参考与边界
+│   ├── blog-method.md               # 从原文整理出的详细方法和命令模式
+│   ├── tcp-optimize-review.md       # 对 TCP-Optimize 的证据化参考与边界
+│   └── vps-tcp-tune-review.md       # 对 Eric86777/vps-tcp-tune 的审阅与候选表
 ├── agents/
-│   └── openai.yaml              # Codex UI metadata
-├── README.md                    # 中文说明
-└── LICENSE                      # 来源和许可说明
+│   └── openai.yaml                  # Codex UI metadata
+├── CHANGELOG.md                     # 更新日志
+├── README.md                        # 中文说明
+└── LICENSE                          # 来源和许可说明
 ```
 
 ## 注意事项
@@ -184,7 +216,10 @@ Skill 也审阅了 [`Madhatter2099/TCP-Optimize`](https://github.com/Madhatter20
 - HY2 / TUIC / QUIC 不吃 Linux TCP buffer，但仍会受 MTU、qdisc、CPU 调度和出口 shaping 影响。
 - qdisc drop/backlog 为 0 但 iperf3 高重传时，不要急着全局限速；更可能是路径、上游或对端问题。
 - 一个弱 peer 的结果不能直接推导为全局配置。
+- 换内核 / 跑一键脚本前必须 pin 版本、全量备份，并列出副作用文件清单。
 
 ## 许可与署名
 
 本仓库内容是对原文方法的 Skill 化整理，并保留原文链接和作者信息。原文标注为 CC BY-NC-SA 4.0，请在使用和二次分发时遵守相应要求。
+
+对第三方脚本的审阅仅为互操作与安全边界说明，不构成对其代码的再授权或背书。
